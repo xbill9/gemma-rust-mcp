@@ -22,8 +22,9 @@ are only launched.
 The rig servers also expose tools that deploy, destroy, scale, start, or stop things
 (`cloudrun_deploy`, `cloudrun_destroy`, `cloudrun_update_scaling`, `cloudrun_save_hf_token`,
 `start_model_server`, `stop_model_server`, …). They are billed or destructive. The CLI calls only
-the tools named in `Rig::status_tools` and `Rig::query`; never add one of those, and never add a
-generic "call any tool" option.
+the tools named in `Rig::status_tools` and `Rig::query_tool`; never add one of those, and never
+add a generic "call any tool" option. The same applies to interactive-mode commands: `/status` only
+runs `Rig::status_tools`.
 
 ## Gotchas
 
@@ -34,7 +35,7 @@ generic "call any tool" option.
 - **Failure is reported in the text, not the protocol**: rig tools return markdown starting with
   `❌` and leave `isError` false. `call()` treats a leading `❌` as failure; keep that. For the
   query tool a leading `📡` means "reasoning only, no answer yet" (Gemma 4 ran out of
-  `max_tokens` mid-thought) — `run()` reports it as no answer. On status tools `📡` is just
+  `max_tokens` mid-thought) — `ask()` reports it as no answer. On status tools `📡` is just
   informational.
 - The query tools differ: local `query_model(prompt, max_tokens)` suppresses the reasoning and
   reports token counts; Cloud Run `cloudrun_query_gemma4_with_stats(prompt)` takes no
@@ -54,3 +55,10 @@ latency, server name/version, protocol version and capabilities; every tool the 
 latency, `isError`, and the returned text (a `structuredContent` that only mirrors the text is
 not printed twice); and the server's stderr log. Exit codes: 0 answered, 1 error, 2 the query
 tool failed or returned no answer.
+
+`-i/--interactive` (`make chat`, `make chat-cloud`) keeps one MCP session open. The startup steps
+print once, then each prompt goes through the same `ask()` as a single run, followed by the new
+stderr lines (`print_log` tracks how many it has shown). The tools take one prompt, so there is no
+conversation memory. `readline` runs inside `block_in_place` so the rmcp transport keeps running.
+A turn's error is printed and the loop continues; exit 0 on `/quit` or Ctrl-D. `make help` lists
+the other targets (`debug`, `prod`, `lint`, `test`, `ci`, `run`, `clean`, …).

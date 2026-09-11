@@ -49,6 +49,7 @@ cargo build --release
 gemma-rust-mcp "In one sentence, what is a TPU?"                  # local rig
 gemma-rust-mcp --rig cloudrun "In one sentence, what is a TPU?"   # Cloud Run rig
 gemma-rust-mcp --no-status --schemas "Why is the sky blue?"
+gemma-rust-mcp -i                                                 # interactive (make chat / chat-cloud)
 ```
 
 | Option | Env | Default | |
@@ -60,8 +61,16 @@ gemma-rust-mcp --no-status --schemas "Why is the sky blue?"
 | `--no-status` | | | Skip the status tools, only run the query |
 | `--schemas` | | | Print every tool's input schema |
 | `--timeout` | | `600` | Seconds, for the handshake and for each tool call |
+| `-i, --interactive` | | | Keep the MCP session open and read prompts until `/quit` or Ctrl-D |
 
 Exit codes: `0` answered, `1` error, `2` the query tool failed or returned no answer.
+
+**Interactive mode** launches the server, lists its tools, and runs the status tools once. After
+that, each prompt is one query tool call, followed by whatever the server logged during that call.
+The rig tools take a single prompt, so **the model does not see earlier turns** (gemma-rust `-i`
+does keep the conversation). `/status` re-runs the status tools. A prompt given on the command
+line becomes the first turn. A failed turn is printed and the session continues; it exits `0` on
+`/quit` or Ctrl-D.
 
 The rig servers are not part of this repo. Any MCP server started as `server.py` that offers the
 tools in the table above works; point `--rig-dir` at it. The Cloud Run server finds its service

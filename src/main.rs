@@ -13,9 +13,15 @@ use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, JsonObject};
 use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+const DEFAULT_PROMPT: &str = "In one sentence, what is a TPU?";
+const INTERACTIVE_HELP: &str =
+    "Commands: /status re-runs the status tools, /help, /quit (or Ctrl-D).";
 
 #[derive(Parser)]
 #[command(
@@ -23,9 +29,12 @@ use tokio::process::Command;
     about = "Ask a Gemma 4 rig one question through its MCP server and show the details"
 )]
 struct Args {
-    /// Prompt to send
-    #[arg(default_value = "In one sentence, what is a TPU?")]
-    prompt: String,
+    /// Prompt to send [default: "In one sentence, what is a TPU?"]; with --interactive, the first turn
+    prompt: Option<String>,
+
+    /// Keep asking: read prompts from the terminal, one query tool call each
+    #[arg(short, long)]
+    interactive: bool,
 
     /// Which rig's MCP server to launch
     #[arg(short, long, value_enum, env = "GEMMA_RIG", default_value_t = Rig::Local)]
@@ -81,16 +90,17 @@ impl Rig {
         }
     }
 
-    fn query(self, args: &Args) -> (&'static str, JsonObject) {
+    fn query_tool(self) -> &'static str {
         match self {
-            Rig::Local => (
-                "query_model",
-                object(json!({"prompt": args.prompt, "max_tokens": args.max_tokens})),
-            ),
-            Rig::Cloudrun => (
-                "cloudrun_query_gemma4_with_stats",
-                object(json!({"prompt": args.prompt})),
-            ),
+            Rig::Local => "query_model",
+            Rig::Cloudrun => "cloudrun_query_gemma4_with_stats",
+        }
+    }
+
+    fn query_args(self, prompt: &str, max_tokens: u32) -> JsonObject {
+        match self {
+            Rig::Local => object(json!({"prompt": prompt, "max_tokens": max_tokens})),
+            Rig::Cloudrun => object(json!({"prompt": prompt})),
         }
     }
 }
@@ -139,6 +149,7 @@ async fn run(args: Args) -> Result<ExitCode> {
 
     // Collect the server's own log (stderr) to print at the end.
     let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut seen = 0;
     let log_reader = stderr.map(|stderr| {
         let log = Arc::clone(&log);
         tokio::spawn(async move {
@@ -153,11 +164,11 @@ async fn run(args: Args) -> Result<ExitCode> {
     let client = match tokio::time::timeout(timeout, ().serve(transport)).await {
         Ok(Ok(client)) => client,
         Ok(Err(e)) => {
-            print_log(&log);
+            print_log(&log, &mut seen);
             return Err(e).context("MCP initialize handshake failed");
         }
         Err(_) => {
-            print_log(&log);
+            print_log(&log, &mut seen);
             bail!("MCP initialize handshake timed out after {}s", args.timeout);
         }
     };
@@ -207,7 +218,7 @@ async fn run(args: Args) -> Result<ExitCode> {
     } else {
         rig.status_tools()
     };
-    let (query_tool, query_args) = rig.query(&args);
+    let query_tool = rig.query_tool();
 
     section("Tools");
     let started = Instant::now();
@@ -247,17 +258,12 @@ async fn run(args: Args) -> Result<ExitCode> {
     for name in status_tools {
         call(&client, name, JsonObject::new(), timeout).await?;
     }
-    // query_model answers "📡 Reasoning only — no answer yet" when Gemma 4 runs out of
-    // max_tokens mid-thought: not a failure, but not an answer either.
-    let answered = match call(&client, query_tool, query_args, timeout).await? {
-        Some(text) if text.trim_start().starts_with('📡') => {
-            println!(
-                "  No answer: the model was still reasoning when it stopped. Raise --max-tokens."
-            );
-            false
-        }
-        Some(_) => true,
-        None => false,
+    let answered = if args.interactive {
+        interactive(&client, &args, timeout, &log, &mut seen).await?;
+        true
+    } else {
+        let prompt = args.prompt.as_deref().unwrap_or(DEFAULT_PROMPT);
+        ask(&client, &args, prompt, timeout).await?
     };
 
     client
@@ -267,13 +273,103 @@ async fn run(args: Args) -> Result<ExitCode> {
     if let Some(reader) = log_reader {
         let _ = tokio::time::timeout(Duration::from_secs(2), reader).await;
     }
-    print_log(&log);
+    print_log(&log, &mut seen);
 
     Ok(if answered {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(2)
     })
+}
+
+/// Ask one question through the rig's query tool. True when the model answered.
+async fn ask(client: &Client, args: &Args, prompt: &str, timeout: Duration) -> Result<bool> {
+    let rig = args.rig;
+    let arguments = rig.query_args(prompt, args.max_tokens);
+    // query_model answers "📡 Reasoning only — no answer yet" when Gemma 4 runs out of
+    // max_tokens mid-thought: not a failure, but not an answer either.
+    Ok(
+        match call(client, rig.query_tool(), arguments, timeout).await? {
+            Some(text) if text.trim_start().starts_with('📡') => {
+                println!(
+                    "  No answer: the model was still reasoning when it stopped. Raise --max-tokens."
+                );
+                false
+            }
+            Some(_) => true,
+            None => false,
+        },
+    )
+}
+
+/// Read prompts until /quit or Ctrl-D, one query tool call each, printing the server's new log
+/// lines after every turn.
+async fn interactive(
+    client: &Client,
+    args: &Args,
+    timeout: Duration,
+    log: &Mutex<Vec<String>>,
+    seen: &mut usize,
+) -> Result<()> {
+    print_fresh_log(log, seen).await;
+    section("Interactive");
+    println!(
+        "  Each prompt is one `{}` call. The tool takes a single prompt, so the model does not see \
+         earlier turns.",
+        args.rig.query_tool()
+    );
+    println!("  {INTERACTIVE_HELP}");
+    let mut editor = DefaultEditor::new().context("starting the line editor")?;
+    let mut next = args.prompt.clone();
+    loop {
+        let line = match next.take() {
+            Some(prompt) => prompt,
+            // readline blocks; block_in_place keeps the MCP transport's tasks running meanwhile.
+            None => match tokio::task::block_in_place(|| editor.readline("\ngemma-mcp> ")) {
+                Ok(line) => line,
+                Err(ReadlineError::Interrupted) => continue,
+                Err(ReadlineError::Eof) => break,
+                Err(e) => return Err(e).context("reading a prompt"),
+            },
+        };
+        let prompt = line.trim();
+        if prompt.is_empty() {
+            continue;
+        }
+        let _ = editor.add_history_entry(prompt);
+        let result: Result<()> = match prompt {
+            "/quit" | "/exit" => break,
+            "/help" => {
+                println!("  {INTERACTIVE_HELP}");
+                continue;
+            }
+            "/status" => {
+                async {
+                    for name in args.rig.status_tools() {
+                        call(client, name, JsonObject::new(), timeout).await?;
+                    }
+                    Ok(())
+                }
+                .await
+            }
+            p if p.starts_with('/') => {
+                println!("  Unknown command {p}. {INTERACTIVE_HELP}");
+                continue;
+            }
+            _ => ask(client, args, prompt, timeout).await.map(|_| ()),
+        };
+        if let Err(e) = result {
+            eprintln!("\nerror: {e:#}");
+        }
+        print_fresh_log(log, seen).await;
+    }
+    Ok(())
+}
+
+/// Give the stderr reader a moment to catch up, then print what the server logged.
+async fn print_fresh_log(log: &Mutex<Vec<String>>, seen: &mut usize) {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    print_log(log, seen);
 }
 
 /// Call one tool and print the exchange. Returns the result text, or None if the tool failed.
@@ -336,15 +432,18 @@ fn text_of(result: &CallToolResult) -> String {
         .join("\n")
 }
 
-fn print_log(log: &Mutex<Vec<String>>) {
+/// Print the server's stderr lines that have not been printed yet.
+fn print_log(log: &Mutex<Vec<String>>, seen: &mut usize) {
     section("Server log (stderr)");
     let lines = log.lock().unwrap();
-    if lines.is_empty() {
+    let fresh = &lines[(*seen).min(lines.len())..];
+    if fresh.is_empty() {
         println!("  (nothing)");
     }
-    for line in lines.iter() {
+    for line in fresh {
         println!("  {line}");
     }
+    *seen = lines.len();
 }
 
 fn object(value: Value) -> JsonObject {
