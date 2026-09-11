@@ -32,7 +32,12 @@ an arbitrary one.
 | rig | status tools | query tool |
 |---|---|---|
 | `local` | `gpu_status`, `model_server_status`, `model_info` | `query_model(prompt, max_tokens)` |
-| `cloudrun` | `cloudrun_get_system_status`, `cloudrun_get_model_details` | `cloudrun_query_gemma4_with_stats(prompt)` |
+| `cloudrun` | `cloudrun_status`, `cloudrun_get_system_status`, `cloudrun_get_model_details` | `cloudrun_query_gemma4_with_stats(prompt)` |
+
+`--status` (`make status`, `make status-cloud`) runs only the status tools: on the local rig the
+GPU and its memory, the model server, and the checkpoint; on Cloud Run the deployment's
+conditions and revision, the system dashboard, and the served model. The rig tools report no
+Cloud Run CPU/memory limits; gemma-rust's `make status-cloud` shows those.
 
 ## Build
 
@@ -62,8 +67,10 @@ gemma-rust-mcp -i                                                 # interactive 
 | `--schemas` | | | Print every tool's input schema |
 | `--timeout` | | `600` | Seconds, for the handshake and for each tool call |
 | `-i, --interactive` | | | Keep the MCP session open and read prompts until `/quit` or Ctrl-D |
+| `--status` | | | Only run the status tools; skip the query |
 
-Exit codes: `0` answered, `1` error, `2` the query tool failed or returned no answer.
+Exit codes: `0` answered, `1` error, `2` the query tool failed or returned no answer (with
+`--status`: a status tool reported a failure).
 
 **Interactive mode** launches the server, lists its tools, and runs the status tools once. After
 that, each prompt is one query tool call, followed by whatever the server logged during that call.

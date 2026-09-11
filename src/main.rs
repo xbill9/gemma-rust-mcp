@@ -36,6 +36,10 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
+    /// Only run the rig's read-only status tools (model, GPU memory, deployment); skip the query
+    #[arg(long, conflicts_with_all = ["prompt", "interactive", "no_status"])]
+    status: bool,
+
     /// Which rig's MCP server to launch
     #[arg(short, long, value_enum, env = "GEMMA_RIG", default_value_t = Rig::Local)]
     rig: Rig,
@@ -86,7 +90,11 @@ impl Rig {
     fn status_tools(self) -> &'static [&'static str] {
         match self {
             Rig::Local => &["gpu_status", "model_server_status", "model_info"],
-            Rig::Cloudrun => &["cloudrun_get_system_status", "cloudrun_get_model_details"],
+            Rig::Cloudrun => &[
+                "cloudrun_status",
+                "cloudrun_get_system_status",
+                "cloudrun_get_model_details",
+            ],
         }
     }
 
@@ -229,7 +237,8 @@ async fn run(args: Args) -> Result<ExitCode> {
     );
     let width = tools.iter().map(|t| t.name.len()).max().unwrap_or(0);
     for tool in &tools {
-        let called = tool.name == query_tool || status_tools.contains(&tool.name.as_ref());
+        let called =
+            (!args.status && tool.name == query_tool) || status_tools.contains(&tool.name.as_ref());
         let description = tool
             .description
             .as_deref()
@@ -255,10 +264,15 @@ async fn run(args: Args) -> Result<ExitCode> {
         }
     }
 
+    let mut status_ok = true;
     for name in status_tools {
-        call(&client, name, JsonObject::new(), timeout).await?;
+        status_ok &= call(&client, name, JsonObject::new(), timeout)
+            .await?
+            .is_some();
     }
-    let answered = if args.interactive {
+    let answered = if args.status {
+        status_ok
+    } else if args.interactive {
         interactive(&client, &args, timeout, &log, &mut seen).await?;
         true
     } else {

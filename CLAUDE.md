@@ -60,5 +60,8 @@ tool failed or returned no answer.
 print once, then each prompt goes through the same `ask()` as a single run, followed by the new
 stderr lines (`print_log` tracks how many it has shown). The tools take one prompt, so there is no
 conversation memory. `readline` runs inside `block_in_place` so the rmcp transport keeps running.
-A turn's error is printed and the loop continues; exit 0 on `/quit` or Ctrl-D. `make help` lists
+A turn's error is printed and the loop continues; exit 0 on `/quit` or Ctrl-D.
+
+`--status` (`make status`, `make status-cloud`) runs only `Rig::status_tools` and skips the query;
+exit 2 if one reports failure. `make help` lists
 the other targets (`debug`, `prod`, `lint`, `test`, `ci`, `run`, `clean`, …).
