@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/rustfmt.sh\" 2>/dev/null || true",
+            "timeout": 60,
+            "statusMessage": "cargo fmt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/clippy.sh\"",
+            "timeout": 300,
+            "statusMessage": "cargo clippy"
+          }
+        ]
+      }
+    ]
+  }
+}
