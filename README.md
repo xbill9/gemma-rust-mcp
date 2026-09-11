@@ -29,15 +29,20 @@ The rig servers also expose tools that deploy, destroy, scale, start, and stop t
 billed or destructive, so this CLI calls a fixed list of read-only tools and has no option to call
 an arbitrary one.
 
-| rig | status tools | query tool |
-|---|---|---|
-| `local` | `gpu_status`, `model_server_status`, `model_info` | `query_model(prompt, max_tokens)` |
-| `cloudrun` | `cloudrun_status`, `cloudrun_get_system_status`, `cloudrun_get_model_details` | `cloudrun_query_gemma4_with_stats(prompt)` |
+| rig | status tools | help tool | query tool |
+|---|---|---|---|
+| `local` | `gpu_status`, `model_server_status`, `model_info` | `get_help` | `query_model(prompt, max_tokens)` |
+| `cloudrun` | `cloudrun_status`, `cloudrun_get_system_status`, `cloudrun_get_model_details` | `cloudrun_get_help` | `cloudrun_query_gemma4_with_stats(prompt)` |
 
 `--status` (`make status`, `make status-cloud`) runs only the status tools: on the local rig the
 GPU and its memory, the model server, and the checkpoint; on Cloud Run the deployment's
 conditions and revision, the system dashboard, and the served model. The rig tools report no
 Cloud Run CPU/memory limits; gemma-rust's `make status-cloud` shows those.
+
+`--rig-help` (`make rig-help`, `make rig-help-cloud`) runs only the rig's help tool, which is
+the server describing itself. The local rig lists its tools. The Cloud Run rig also prints its
+configuration, including the GCP project and region, so redact those before you share the output.
+`--help` is this CLI's own help.
 
 ## Build
 
@@ -68,14 +73,17 @@ gemma-rust-mcp -i                                                 # interactive 
 | `--timeout` | | `600` | Seconds, for the handshake and for each tool call |
 | `-i, --interactive` | | | Keep the MCP session open and read prompts until `/quit` or Ctrl-D |
 | `--status` | | | Only run the status tools; skip the query |
+| `--rig-help` | | | Only run the rig's help tool; skip the query |
+| `-h, --help` | | | This CLI's options |
 
 Exit codes: `0` answered, `1` error, `2` the query tool failed or returned no answer (with
-`--status`: a status tool reported a failure).
+`--status` or `--rig-help`: the tool reported a failure).
 
 **Interactive mode** launches the server, lists its tools, and runs the status tools once. After
 that, each prompt is one query tool call, followed by whatever the server logged during that call.
 The rig tools take a single prompt, so **the model does not see earlier turns** (gemma-rust `-i`
-does keep the conversation). `/status` re-runs the status tools. A prompt given on the command
+does keep the conversation). `/status` re-runs the status tools, `/rig-help` calls the rig's help
+tool, and `/help` lists the commands. A prompt given on the command
 line becomes the first turn. A failed turn is printed and the session continues; it exits `0` on
 `/quit` or Ctrl-D.
 

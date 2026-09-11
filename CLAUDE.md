@@ -22,9 +22,9 @@ are only launched.
 The rig servers also expose tools that deploy, destroy, scale, start, or stop things
 (`cloudrun_deploy`, `cloudrun_destroy`, `cloudrun_update_scaling`, `cloudrun_save_hf_token`,
 `start_model_server`, `stop_model_server`, …). They are billed or destructive. The CLI calls only
-the tools named in `Rig::status_tools` and `Rig::query_tool`; never add one of those, and never
-add a generic "call any tool" option. The same applies to interactive-mode commands: `/status` only
-runs `Rig::status_tools`.
+the tools named in `Rig::status_tools`, `Rig::help_tool` and `Rig::query_tool`; never add one of
+those, and never add a generic "call any tool" option. The same applies to interactive-mode
+commands: `/status` only runs `Rig::status_tools`, `/rig-help` only `Rig::help_tool`.
 
 ## Gotchas
 
@@ -63,5 +63,7 @@ conversation memory. `readline` runs inside `block_in_place` so the rmcp transpo
 A turn's error is printed and the loop continues; exit 0 on `/quit` or Ctrl-D.
 
 `--status` (`make status`, `make status-cloud`) runs only `Rig::status_tools` and skips the query;
-exit 2 if one reports failure. `make help` lists
+exit 2 if one reports failure. `--rig-help` (`make rig-help`, `make rig-help-cloud`) likewise runs
+only `Rig::help_tool`; `cloudrun_get_help` prints the project id, so redact it in published
+output. `make help` lists
 the other targets (`debug`, `prod`, `lint`, `test`, `ci`, `run`, `clean`, …).

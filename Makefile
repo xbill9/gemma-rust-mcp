@@ -6,7 +6,7 @@ PROMPT ?= In one sentence, what is a TPU?
 LOCAL_RIG := $(HOME)/gemma4-dev/local-llamacpp-1650ti-2b-q4_0
 CLOUD_RIG := $(HOME)/gemma4-dev/gpu-2B-cloudrun-devops-agent
 
-.PHONY: all build debug prod release run run-debug run-cloud chat chat-cloud status status-cloud clean lint clippy fmt format fmt-check check test ci help
+.PHONY: all build debug prod release run run-debug run-cloud chat chat-cloud status status-cloud rig-help rig-help-cloud clean lint clippy fmt format fmt-check check test ci help
 
 # The default target
 all: debug
@@ -56,6 +56,14 @@ status:
 # The Cloud Run rig's status tools: deployment, system status, model details
 status-cloud:
 	@cargo run -q --release -- --rig cloudrun --status
+
+# The local rig's own help tool: the tools it exposes
+rig-help:
+	@cargo run -q --release -- --rig local --rig-help
+
+# The Cloud Run rig's own help tool: its configuration and tools
+rig-help-cloud:
+	@cargo run -q --release -- --rig cloudrun --rig-help
 
 # Clean the project
 clean:
@@ -114,6 +122,8 @@ help:
 	@echo "    chat-cloud   Interactive session through the Cloud Run rig's MCP server"
 	@echo "    status       Local rig's status tools: GPU memory, model server, model info"
 	@echo "    status-cloud Cloud Run rig's status tools: deployment, system status, model"
+	@echo "    rig-help     Local rig's own help tool: the tools it exposes"
+	@echo "    rig-help-cloud Cloud Run rig's own help tool: configuration and tools"
 	@echo "    clean        Remove build artefacts"
 	@echo "    lint         clippy -D warnings + format check"
 	@echo "    clippy       clippy only"

@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 const DEFAULT_PROMPT: &str = "In one sentence, what is a TPU?";
-const INTERACTIVE_HELP: &str =
-    "Commands: /status re-runs the status tools, /help, /quit (or Ctrl-D).";
+const INTERACTIVE_HELP: &str = "Commands: /status re-runs the status tools, /rig-help asks the \
+     server for its own help, /help, /quit (or Ctrl-D).";
 
 #[derive(Parser)]
 #[command(
@@ -39,6 +39,10 @@ struct Args {
     /// Only run the rig's read-only status tools (model, GPU memory, deployment); skip the query
     #[arg(long, conflicts_with_all = ["prompt", "interactive", "no_status"])]
     status: bool,
+
+    /// Only run the rig's read-only help tool (its tools and configuration); skip the query
+    #[arg(long, conflicts_with_all = ["prompt", "interactive", "status", "no_status"])]
+    rig_help: bool,
 
     /// Which rig's MCP server to launch
     #[arg(short, long, value_enum, env = "GEMMA_RIG", default_value_t = Rig::Local)]
@@ -95,6 +99,14 @@ impl Rig {
                 "cloudrun_get_system_status",
                 "cloudrun_get_model_details",
             ],
+        }
+    }
+
+    /// The server's own help text: its tools and, on Cloud Run, its configuration. Read-only.
+    fn help_tool(self) -> &'static str {
+        match self {
+            Rig::Local => "get_help",
+            Rig::Cloudrun => "cloudrun_get_help",
         }
     }
 
@@ -221,12 +233,18 @@ async fn run(args: Args) -> Result<ExitCode> {
         }
     }
 
-    let status_tools: &[&str] = if args.no_status {
+    let status_tools: &[&str] = if args.no_status || args.rig_help {
         &[]
     } else {
         rig.status_tools()
     };
-    let query_tool = rig.query_tool();
+    // The tools this run calls before any interactive commands.
+    let mut calls = status_tools.to_vec();
+    if args.rig_help {
+        calls.push(rig.help_tool());
+    } else if !args.status {
+        calls.push(rig.query_tool());
+    }
 
     section("Tools");
     let started = Instant::now();
@@ -237,8 +255,7 @@ async fn run(args: Args) -> Result<ExitCode> {
     );
     let width = tools.iter().map(|t| t.name.len()).max().unwrap_or(0);
     for tool in &tools {
-        let called =
-            (!args.status && tool.name == query_tool) || status_tools.contains(&tool.name.as_ref());
+        let called = calls.contains(&tool.name.as_ref());
         let description = tool
             .description
             .as_deref()
@@ -258,7 +275,7 @@ async fn run(args: Args) -> Result<ExitCode> {
         }
     }
     println!("  (* = called by this demo, which only calls read-only tools)");
-    for name in status_tools.iter().chain([&query_tool]) {
+    for name in &calls {
         if !tools.iter().any(|t| t.name == *name) {
             bail!("the server does not offer the `{name}` tool");
         }
@@ -270,7 +287,11 @@ async fn run(args: Args) -> Result<ExitCode> {
             .await?
             .is_some();
     }
-    let answered = if args.status {
+    let answered = if args.rig_help {
+        call(&client, rig.help_tool(), JsonObject::new(), timeout)
+            .await?
+            .is_some()
+    } else if args.status {
         status_ok
     } else if args.interactive {
         interactive(&client, &args, timeout, &log, &mut seen).await?;
@@ -366,6 +387,9 @@ async fn interactive(
                 }
                 .await
             }
+            "/rig-help" => call(client, args.rig.help_tool(), JsonObject::new(), timeout)
+                .await
+                .map(|_| ()),
             p if p.starts_with('/') => {
                 println!("  Unknown command {p}. {INTERACTIVE_HELP}");
                 continue;
